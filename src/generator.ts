@@ -39,11 +39,24 @@ function extractJsonFromText(text: string): any {
 /**
  * Creates a detailed prompt for the Gemini API
  */
-function createDetailedPrompt(web2Code: string): string {
+function createDetailedPrompt(web2Code: string, functionalityFocus?: string): string {
+  let focusInstruction = '';
+  
+  if (functionalityFocus && functionalityFocus.trim()) {
+    focusInstruction = `
+FOCUS ON THIS SPECIFIC FUNCTIONALITY:
+${functionalityFocus}
+
+Only convert the specifically mentioned functionality above. If functions or features not mentioned are required 
+for the mentioned functionality to work, include them as well.
+`;
+  }
+
   return `
 INSTRUCTIONS:
 You are an expert in ICP blockchain and Web2-to-Web3 transitions.
 Your task is to convert Web2 JavaScript code to Web3 using Internet Computer Protocol.
+${focusInstruction}
 
 INPUT:
 \`\`\`javascript
@@ -84,12 +97,12 @@ function validateResponseStructure(obj: any): boolean {
   return true;
 }
 
-export async function generateCanisterAndModifyCode(web2Code: string): Promise<{
+export async function generateCanisterAndModifyCode(web2Code: string, functionalityFocus?: string): Promise<{
   canisterCode: string;
   modifiedWeb2Code: string;
   canisterName: string;
 }> {
-  let prompt = createDetailedPrompt(web2Code);
+  let prompt = createDetailedPrompt(web2Code, functionalityFocus);
   
   // Maximum number of retries
   const MAX_RETRIES = 3;

@@ -1,41 +1,43 @@
 {
-    "name": "icp-web2-to-web3",
-    "displayName": "ICP Web2 to Web3 Converter",
-    "description": "Converts Web2 code to Web3 using ICP blockchain",
-    "version": "0.0.1",
-    "engines": {
-        "vscode": "^1.85.0"
-    },
-    "categories": [
-        "Other"
-    ],
-    "main": "./out/extension.js",
-    "contributes": {
-        "commands": [
-            {
-                "command": "icp-web2-to-web3.convert",
-                "title": "ICP: Convert to Web3"
-            }
-        ]
-    },
-    "scripts": {
-        "vscode:prepublish": "npm run compile",
-        "compile": "tsc -p ./",
-        "watch": "tsc -watch -p ./",
-        "pretest": "npm run compile",
-        "test": "node ./out/test/runTest.js"
-    },
-    "devDependencies": {
-        "@types/node": "^18.19.31",
-        "@types/vscode": "^1.85.0",
-        "@types/esprima": "^4.0.6",
-        "@types/node-fetch": "^2.6.11",
-        "typescript": "^5.4.5"
-    },
-    "dependencies": {
-        "@dfinity/agent": "^1.2.0",
-        "esprima": "^4.0.1",
-        "node-fetch": "^2.7.0",
-        "recast": "^0.23.7"
-    }
+  "name": "icp-web2-to-web3",
+  "displayName": "ICP Web2 to Web3 Converter",
+  "description": "Converts Web2 code to Web3 using ICP blockchain",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "icp-web2-to-web3.convert",
+        "title": "ICP: Convert to Web3"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.31",
+    "@types/vscode": "^1.85.0",
+    "@types/esprima": "^4.0.6",
+    "@types/node-fetch": "^2.6.11",
+    "@types/fs-extra": "^11.0.4",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@dfinity/agent": "^1.2.0",
+    "esprima": "^4.0.1",
+    "node-fetch": "^2.7.0",
+    "recast": "^0.23.7",
+    "fs-extra": "^11.2.0"
+  }
 }
