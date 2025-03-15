@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { analyzeCode } from './analyzer';
 import { generateCanisterAndModifyCode } from './generator';
 import { deployCanister } from './deployer';
-import { promptForFileSelection, promptForFunctionalityFocus } from './provider';
+import { promptForFileSelection, promptForFunctionalityFocus, SelectedFile } from './provider';
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('ICP Web2 to Web3 extension is now active!');
@@ -15,8 +16,8 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      // Ask user if they want to select a specific file
-      const useFileSelection = await vscode.window.showQuickPick(['Use current file', 'Select a file'], {
+      // Ask user if they want to select specific files
+      const useFileSelection = await vscode.window.showQuickPick(['Use current file', 'Select files'], {
         placeHolder: 'Choose file source for conversion'
       });
       
@@ -24,93 +25,114 @@ export function activate(context: vscode.ExtensionContext) {
         return; // User cancelled
       }
       
-      let web2Code: string;
-      let currentEditor = vscode.window.activeTextEditor;
+      let selectedFiles: SelectedFile[] = [];
       
-      if (useFileSelection === 'Select a file') {
-        const selectedCode = await promptForFileSelection(workspaceFolder);
-        if (!selectedCode) {
-          vscode.window.showInformationMessage('No file selected, operation cancelled.');
+      if (useFileSelection === 'Select files') {
+        const files = await promptForFileSelection(workspaceFolder);
+        if (!files || files.length === 0) {
+          vscode.window.showInformationMessage('No files selected, operation cancelled.');
           return;
         }
-        web2Code = selectedCode;
-        
-        // Create a new document for the selected file if it's not already open
-        if (!currentEditor) {
-          const doc = await vscode.workspace.openTextDocument({
-            content: web2Code,
-            language: 'javascript'
-          });
-          currentEditor = await vscode.window.showTextDocument(doc);
-        }
+        selectedFiles = files;
       } else {
         // Use current file
+        const currentEditor = vscode.window.activeTextEditor;
         if (!currentEditor) {
           vscode.window.showErrorMessage('No active editor found!');
           return;
         }
-        web2Code = currentEditor.document.getText();
+        selectedFiles = [{
+          content: currentEditor.document.getText(),
+          path: currentEditor.document.uri.fsPath,
+          filename: path.basename(currentEditor.document.uri.fsPath)
+        }];
       }
 
       // Prompt for specific functionality
       const functionalityFocus = await promptForFunctionalityFocus();
       
-      const analysis = analyzeCode(web2Code);
-
-      if (!analysis.hasFunctions) {
-        vscode.window.showInformationMessage('No functions found to convert. Please provide code with functions.');
-        return;
-      }
-
       // Show progress while processing
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: 'Converting Web2 to Web3 for ICP...',
+          title: `Converting ${selectedFiles.length} file(s) to Web3 for ICP...`,
           cancellable: false,
         },
         async (progress) => {
-          progress.report({ increment: 10, message: 'Analyzing code...' });
+          let processedCount = 0;
+          
+          for (const file of selectedFiles) {
+            progress.report({ 
+              increment: (100 / selectedFiles.length) * 0.1, 
+              message: `Analyzing ${file.filename}...` 
+            });
+            
+            const web2Code = file.content;
+            const analysis = analyzeCode(web2Code);
 
-          // Generate canister and modify Web2 code
-          const { canisterCode, modifiedWeb2Code, canisterName } = await generateCanisterAndModifyCode(
-            web2Code, 
-            functionalityFocus
-          );
-          progress.report({ increment: 40, message: 'Generating canister and modifying code...' });
+            if (!analysis.hasFunctions) {
+              vscode.window.showInformationMessage(`No functions found in ${file.filename}. Skipping.`);
+              processedCount++;
+              continue;
+            }
 
-          // Save the canister file
-          const canisterUri = vscode.Uri.joinPath(workspaceFolder.uri, 'src', `${canisterName}.mo`);
-          await vscode.workspace.fs.writeFile(canisterUri, new TextEncoder().encode(canisterCode));
+            progress.report({ 
+              increment: (100 / selectedFiles.length) * 0.3, 
+              message: `Generating canister for ${file.filename}...` 
+            });
 
-          // Update the Web2 code in the editor
-          if (currentEditor) {
-            await currentEditor.edit((editBuilder) => {
-              editBuilder.replace(
-                new vscode.Range(0, 0, currentEditor!.document.lineCount, 0),
+            // Generate canister and modify Web2 code
+            const { canisterCode, modifiedWeb2Code, canisterName } = await generateCanisterAndModifyCode(
+              web2Code, 
+              functionalityFocus
+            );
+
+            // Save the canister file
+            const canisterUri = vscode.Uri.joinPath(workspaceFolder.uri, 'src', `${canisterName}.mo`);
+            await vscode.workspace.fs.writeFile(canisterUri, new TextEncoder().encode(canisterCode));
+
+            // Find or open the file to update the Web2 code
+            let document = await findOrOpenDocument(file.path);
+            
+            if (document) {
+              const edit = new vscode.WorkspaceEdit();
+              edit.replace(
+                document.uri,
+                new vscode.Range(0, 0, document.lineCount, 0),
                 modifiedWeb2Code
               );
+              await vscode.workspace.applyEdit(edit);
+            }
+
+            progress.report({ 
+              increment: (100 / selectedFiles.length) * 0.4, 
+              message: `Deploying canister for ${file.filename}...` 
             });
-          }
 
-          progress.report({ increment: 70, message: 'Deploying canister...' });
+            // Deploy the canister
+            const canisterId = await deployCanister(canisterName, workspaceFolder.uri.fsPath);
 
-          // Deploy the canister
-          const canisterId = await deployCanister(canisterName, workspaceFolder.uri.fsPath);
-
-          // Update Web2 code with canister ID
-          const finalWeb2Code = modifiedWeb2Code.replace('CANISTER_ID', canisterId);
-          if (currentEditor) {
-            await currentEditor.edit((editBuilder) => {
-              editBuilder.replace(
-                new vscode.Range(0, 0, currentEditor!.document.lineCount, 0),
+            // Update Web2 code with canister ID
+            if (document) {
+              const finalWeb2Code = modifiedWeb2Code.replace('CANISTER_ID', canisterId);
+              const edit = new vscode.WorkspaceEdit();
+              edit.replace(
+                document.uri,
+                new vscode.Range(0, 0, document.lineCount, 0),
                 finalWeb2Code
               );
+              await vscode.workspace.applyEdit(edit);
+            }
+
+            processedCount++;
+            progress.report({ 
+              increment: (100 / selectedFiles.length) * 0.2, 
+              message: `${processedCount}/${selectedFiles.length} files processed` 
             });
           }
 
           progress.report({ increment: 100, message: 'Conversion complete!' });
-          vscode.window.showInformationMessage(`Canister deployed at ${canisterId}. Web2 code updated!`);
+          vscode.window.showInformationMessage(`${processedCount} file(s) converted successfully to Web3 for ICP.`);
         }
       );
     } catch (error: unknown) {
@@ -120,6 +142,29 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   context.subscriptions.push(disposable);
+}
+
+/**
+ * Finds an existing document or opens a new one
+ */
+async function findOrOpenDocument(filePath: string): Promise<vscode.TextDocument | undefined> {
+  // Check if document is already open
+  for (const doc of vscode.workspace.textDocuments) {
+    if (doc.uri.fsPath === filePath) {
+      return doc;
+    }
+  }
+  
+  // Open the document if it's not already open
+  try {
+    const uri = vscode.Uri.file(filePath);
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc, { preview: false });
+    return doc;
+  } catch (error) {
+    console.error(`Error opening document ${filePath}:`, error);
+    return undefined;
+  }
 }
 
 export function deactivate() {}

@@ -8,6 +8,12 @@ interface FileInfo {
     path: string;
 }
 
+export interface SelectedFile {
+    content: string;
+    path: string;
+    filename: string;
+}
+
 /**
  * Lists JavaScript/TypeScript files in the workspace
  */
@@ -33,9 +39,10 @@ export async function listJavaScriptFiles(workspaceFolder: vscode.WorkspaceFolde
 }
 
 /**
- * Prompts the user to select a file to convert
+ * Prompts the user to select one or more files to convert
+ * @returns Array of selected files with their content
  */
-export async function promptForFileSelection(workspaceFolder: vscode.WorkspaceFolder): Promise<string | undefined> {
+export async function promptForFileSelection(workspaceFolder: vscode.WorkspaceFolder): Promise<SelectedFile[] | undefined> {
     const fileInfos = await listJavaScriptFiles(workspaceFolder);
     
     if (fileInfos.length === 0) {
@@ -52,21 +59,44 @@ export async function promptForFileSelection(workspaceFolder: vscode.WorkspaceFo
     const options = [currentFileOption, ...fileInfos];
     
     const selection = await vscode.window.showQuickPick(options, {
-        placeHolder: 'Select a file to convert or use current file',
+        placeHolder: 'Select files to convert (press space to select, enter to confirm)',
+        canPickMany: true,
         ignoreFocusOut: true
     });
     
-    if (!selection) {
+    if (!selection || selection.length === 0) {
         return undefined;
     }
     
-    if (selection === currentFileOption) {
+    const selectedFiles: SelectedFile[] = [];
+    
+    // Check if the current file option was selected
+    const hasCurrentFileOption = selection.some(item => item === currentFileOption);
+    
+    if (hasCurrentFileOption) {
         const editor = vscode.window.activeTextEditor;
-        return editor ? editor.document.getText() : undefined;
-    } else {
-        const fileInfo = selection as FileInfo;
-        return fs.readFileSync(fileInfo.path, 'utf8');
+        if (editor) {
+            selectedFiles.push({
+                content: editor.document.getText(),
+                path: editor.document.uri.fsPath,
+                filename: path.basename(editor.document.uri.fsPath)
+            });
+        }
     }
+    
+    // Add selected workspace files
+    for (const item of selection) {
+        if (item !== currentFileOption) {
+            const fileInfo = item as FileInfo;
+            selectedFiles.push({
+                content: fs.readFileSync(fileInfo.path, 'utf8'),
+                path: fileInfo.path,
+                filename: path.basename(fileInfo.path)
+            });
+        }
+    }
+    
+    return selectedFiles;
 }
 
 /**
