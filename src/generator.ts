@@ -39,8 +39,14 @@ function extractJsonFromText(text: string): any {
 /**
  * Creates a detailed prompt for the Gemini API
  */
-function createDetailedPrompt(web2Code: string, functionalityFocus?: string): string {
+function createDetailedPrompt(
+  web2Code: string, 
+  functionalityFocus?: string, 
+  isConsolidated = false,
+  existingCanisterName?: string
+): string {
   let focusInstruction = '';
+  let consolidatedInstruction = '';
   
   if (functionalityFocus && functionalityFocus.trim()) {
     focusInstruction = `
@@ -52,11 +58,26 @@ for the mentioned functionality to work, include them as well.
 `;
   }
 
+  if (isConsolidated) {
+    consolidatedInstruction = `
+IMPORTANT: This input contains code from multiple files (indicated by file comments).
+Create ONE SINGLE canister that includes ALL functions from these files.
+The canister should be well-structured with clear organization of functions.
+`;
+  } else if (existingCanisterName) {
+    consolidatedInstruction = `
+IMPORTANT: A canister named "${existingCanisterName}" already exists that contains all necessary functions.
+DO NOT create a new canister. Instead, modify this client code to use the existing canister.
+In the modifiedWeb2Code, use the existing canister name and don't change the canisterName field.
+`;
+  }
+
   return `
 INSTRUCTIONS:
 You are an expert in ICP blockchain and Web2-to-Web3 transitions.
 Your task is to convert Web2 JavaScript code to Web3 using Internet Computer Protocol.
 ${focusInstruction}
+${consolidatedInstruction}
 
 INPUT:
 \`\`\`javascript
@@ -75,7 +96,7 @@ CRITICAL: DO NOT use markdown formatting or code blocks in your response.
 ONLY return a valid JSON object with the structure shown below:
 
 {
-  "canisterCode": "actor { public func yourFunction() : async Text { return \"Hello\" }; }",
+  "canisterCode": "actor { public func yourFunction() : async Text { return \\"Hello\\" }; }",
   "modifiedWeb2Code": "const agent = new HttpAgent(); const canister = Actor.createActor(...);",
   "canisterName": "YourCanister"
 }
@@ -97,12 +118,18 @@ function validateResponseStructure(obj: any): boolean {
   return true;
 }
 
-export async function generateCanisterAndModifyCode(web2Code: string, functionalityFocus?: string): Promise<{
+export async function generateCanisterAndModifyCode(
+  web2Code: string, 
+  functionalityFocus?: string,
+  isConsolidated = false,
+  existingCanisterName?: string,
+  existingCanisterId?: string
+): Promise<{
   canisterCode: string;
   modifiedWeb2Code: string;
   canisterName: string;
 }> {
-  let prompt = createDetailedPrompt(web2Code, functionalityFocus);
+  let prompt = createDetailedPrompt(web2Code, functionalityFocus, isConsolidated, existingCanisterName);
   
   // Maximum number of retries
   const MAX_RETRIES = 3;
@@ -169,6 +196,14 @@ EXAMPLE OF CORRECT RESPONSE FORMAT:
   // Final validation before returning
   if (!validateResponseStructure(result)) {
     throw new Error('Invalid Gemini API response: missing required fields');
+  }
+  
+  // If we have an existing canister ID, replace placeholder in the code
+  if (existingCanisterId) {
+    result.modifiedWeb2Code = result.modifiedWeb2Code.replace('CANISTER_ID', existingCanisterId);
+    if (existingCanisterName) {
+      result.canisterName = existingCanisterName; // Use the existing name
+    }
   }
   
   return {
