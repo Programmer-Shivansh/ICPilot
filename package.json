@@ -1,19 +1,26 @@
 {
-  "name": "icpilot-web2-to-web3",
+  "name": "icpilot",
   "displayName": "ICPilot Web2 to Web3 Converter",
   "description": "Converts Web2 code to Web3 using ICP blockchain",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Programmer-Shivansh/ICPilot"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Other"
   ],
+  "activationEvents": [
+    "onCommand:icpilot.convert"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "icp-web2-to-web3.convert",
+        "command": "icpilot.convert",
         "title": "ICPilot: Convert to Web3"
       }
     ]
