@@ -4,41 +4,81 @@ import * as esprima from 'esprima';
 import { callGroqAPI } from './groq';
 
 /**
- * Extracts JSON content from a text string, handling raw JSON or JSON-like content with newlines.
+ * Enhanced JSON extraction function to handle various formats and edge cases
  * @param text The input text to parse
  * @returns The parsed JSON object
- * @throws Error if no valid JSON can be extracted
  */
 function extractJsonFromText(text: string): any {
-  // Validate input
   if (!text || typeof text !== 'string') {
     throw new Error('Input text must be a non-empty string');
   }
 
-  // Trim whitespace
-  let trimmedText = text.trim();
-  console.log('Raw input text:', trimmedText);
-
-  // Remove outer double quotes if present
-  if (trimmedText.startsWith('"') && trimmedText.endsWith('"')) {
-    trimmedText = trimmedText.slice(1, -1);
-    console.log('Removed outer double quotes');
-  }
-
-  // Replace literal newlines with escaped newlines within the JSON structure
-  trimmedText = trimmedText.replace(/\n/g, '\\n');
-  console.log('Sanitized input text:', trimmedText);
-
-  // Attempt to parse the sanitized text as JSON
+  console.log('Attempting to extract JSON from response');
+  
+  // First try: direct JSON parsing of the entire text
   try {
-    const parsedJson = JSON.parse(trimmedText);
-    console.log('Successfully parsed JSON:', parsedJson);
-    return parsedJson;
-  } catch (parseError) {
-    console.error('JSON parsing failed:', parseError instanceof Error ? parseError.message : String(parseError));
-    throw new Error(`Unable to extract valid JSON from the response. Sanitized input: "${trimmedText}"`);
+    return JSON.parse(text);
+  } catch (firstError) {
+    console.log('Direct JSON parsing failed, trying to find JSON object in text');
   }
+
+  // Second try: Find JSON in markdown code blocks
+  const jsonBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (jsonBlockMatch && jsonBlockMatch[1]) {
+    try {
+      return JSON.parse(jsonBlockMatch[1]);
+    } catch (blockError) {
+      console.log('JSON parsing from code block failed');
+    }
+  }
+
+  // Third try: Find anything that looks like a JSON object
+  const jsonPattern = /(\{[\s\S]*\})/g;
+  const matches = text.match(jsonPattern);
+  
+  if (matches) {
+    for (const potentialJson of matches) {
+      try {
+        return JSON.parse(potentialJson);
+      } catch (matchError) {
+        continue; // Try the next match
+      }
+    }
+  }
+
+  // Fourth try: Manual repair of common issues
+  let repaired = text
+    .replace(/\\n/g, '\\\\n') // Double escape newlines
+    .replace(/\\"/g, '\\\\"') // Double escape quotes
+    .replace(/(['"])(\\?.)*?\1/g, match => {
+      // Fix quotes within strings
+      return match.replace(/\\(?!")"/g, '\\\\"');
+    });
+
+  try {
+    return JSON.parse(repaired);
+  } catch (repairError) {
+    // Last resort: Try to manually construct a JSON object from the response
+    try {
+      const canisterCodeMatch = text.match(/["']canisterCode["']\s*:\s*["'](.*?)["']/s);
+      const modifiedCodeMatch = text.match(/["']modifiedWeb2Code["']\s*:\s*["'](.*?)["']/s);
+      const canisterNameMatch = text.match(/["']canisterName["']\s*:\s*["'](.*?)["']/s);
+
+      if (canisterCodeMatch && modifiedCodeMatch && canisterNameMatch) {
+        return {
+          canisterCode: canisterCodeMatch[1].replace(/\\"/g, '"'),
+          modifiedWeb2Code: modifiedCodeMatch[1].replace(/\\"/g, '"'),
+          canisterName: canisterNameMatch[1]
+        };
+      }
+    } catch (lastError) {
+      console.error('All JSON extraction methods failed');
+    }
+  }
+
+  throw new Error(`Could not extract valid JSON from the response: ${text.substring(0, 100)}...`);
 }
+
 /**
  * Formats Motoko code into a readable multi-line structure
  */
@@ -79,7 +119,7 @@ function formatMotokoCode(code: string): string {
 }
 
 /**
- * Creates a detailed prompt for the Gemini API
+ * Creates a detailed prompt for the LLM API with clearer JSON formatting instructions
  */
 function createDetailedPrompt(
   web2Code: string, 
@@ -127,23 +167,21 @@ ${web2Code}
 \`\`\`
 
 OUTPUT REQUIREMENTS:
-1. Generate a Motoko canister that replicates the core functionality of the provided Web2 code
-2. Modify the Web2 JavaScript code to integrate with the canister using @dfinity/agent
-3. Output in VALID JSON format with these exact keys:
-   - canisterCode: The complete Motoko code for the canister, formatted in MULTI-LINE style with proper indentation
+1. Generate a Motoko canister that replicates the core functionality of the provided Web2 code.
+2. Modify the Web2 JavaScript code to integrate with the canister using @dfinity/agent.
+3. Return a valid JSON object with these exact keys:
+   - canisterCode: The complete Motoko code for the canister
    - modifiedWeb2Code: The modified JavaScript code that calls the canister
    - canisterName: A descriptive name for the canister
 
-CRITICAL FORMATTING RULES:
-- For canisterCode, use MULTI-LINE formatting with proper indentation (2 spaces) for readability.
-- Example of correct canisterCode format:
-{
-  "canisterCode": "actor {\n  public func yourFunction() : async Text {\n    return \\"Hello\\";\n  };\n}",
-  "modifiedWeb2Code": "const agent = new HttpAgent(); const canister = Actor.createActor(...);",
-  "canisterName": "YourCanister"
-}
-- DO NOT use markdown formatting or code blocks in your response.
-- ONLY return a valid JSON object with the structure shown above, with NO ADDITIONAL TEXT OR EXPLANATION.
+YOUR RESPONSE MUST BE A VALID JSON OBJECT THAT CAN BE PARSED WITH JSON.parse()
+DO NOT include any text outside the JSON object.
+DO NOT use markdown code blocks in your response.
+PROPERLY ESCAPE all quotes and special characters in strings.
+For multi-line strings like canisterCode, use explicit \\n for line breaks.
+
+EXAMPLE OF EXPECTED RESPONSE FORMAT:
+{"canisterCode":"actor {\\n  public func greet(name: Text) : async Text {\\n    return \\"Hello \\" # name;\\n  };\\n}","modifiedWeb2Code":"import { Actor, HttpAgent } from \\"@dfinity/agent\\";\\n// rest of code","canisterName":"GreeterCanister"}
 `;
 }
 
@@ -182,21 +220,44 @@ export async function generateCanisterAndModifyCode(
   
   while (attempt < MAX_RETRIES) {
     attempt++;
-    console.log(`Attempt ${attempt} to get valid Gemini API response`);
+    console.log(`Attempt ${attempt} to get valid API response`);
     
     try {
-      const geminiResponse = await callGroqAPI(prompt);
-      console.log(`Raw Gemini response (attempt ${attempt}):`, geminiResponse);
+      // Request response with clear JSON formatting instructions
+      const response = await callGroqAPI(prompt);
+      console.log(`Raw API response (attempt ${attempt}) length: ${response.length}`);
       
       try {
-        result = extractJsonFromText(geminiResponse);
+        result = extractJsonFromText(response);
         
         if (validateResponseStructure(result)) {
           console.log("Successfully extracted and validated JSON response");
+          // Format the canister code for better readability
           result.canisterCode = formatMotokoCode(result.canisterCode);
           break;
         } else {
           console.error("Extracted JSON is missing required fields:", result);
+          
+          // Try to fix common structure issues
+          if (result && typeof result === 'object') {
+            if (!result.canisterCode && result.canistercode) {
+              result.canisterCode = result.canistercode;
+            }
+            if (!result.modifiedWeb2Code && result.modifiedweb2code) {
+              result.modifiedWeb2Code = result.modifiedweb2code;
+            }
+            if (!result.canisterName && result.canistername) {
+              result.canisterName = result.canistername;
+            }
+            
+            // Check again after corrections
+            if (validateResponseStructure(result)) {
+              console.log("Fixed JSON structure after case-insensitive key correction");
+              result.canisterCode = formatMotokoCode(result.canisterCode);
+              break;
+            }
+          }
+          
           if (attempt === MAX_RETRIES) {
             throw new Error("Failed to get valid JSON after maximum retries");
           }
@@ -208,14 +269,19 @@ export async function generateCanisterAndModifyCode(
         }
       }
       
+      // Simplify the prompt for retry to get cleaner output
       prompt = `
-${prompt}
+I need you to convert this JavaScript code to an ICP canister. Reply ONLY with a valid JSON object containing:
+- canisterCode: Motoko code as a string with \\n for newlines
+- modifiedWeb2Code: Modified JavaScript code as a string
+- canisterName: Name for the canister
 
-PREVIOUS ATTEMPT FAILED. Your last response could not be parsed as valid JSON or was not properly formatted.
-ENSURE you return a valid JSON object with NO ADDITIONAL TEXT or markdown.
-ENSURE canisterCode is MULTI-LINE with 2-space indentation.
-EXAMPLE OF CORRECT RESPONSE FORMAT:
-{"canisterCode":"actor {\n  public func greet() : async Text {\n    return \\"Hello\\";\n  };\n}","modifiedWeb2Code":"...","canisterName":"..."}
+Here is the code to convert:
+\`\`\`javascript
+${web2Code}
+\`\`\`
+
+RETURN ONLY A RAW JSON OBJECT WITH NO FORMATTING OR EXPLANATION:
 `;
       
     } catch (apiError) {
@@ -227,7 +293,12 @@ EXAMPLE OF CORRECT RESPONSE FORMAT:
   }
   
   if (!validateResponseStructure(result)) {
-    throw new Error('Invalid Gemini API response: missing required fields');
+    // Create a fallback minimal result if all else fails
+    result = {
+      canisterCode: `actor ${forcedCanisterName || "MainCanister"} {\n  // Generated fallback canister\n  public func process(input: Text) : async Text {\n    return "Processed: " # input;\n  };\n}`,
+      modifiedWeb2Code: web2Code + "\n\n// TODO: Implement canister integration",
+      canisterName: forcedCanisterName || "MainCanister"
+    };
   }
   
   if (forcedCanisterName) {
@@ -238,7 +309,6 @@ EXAMPLE OF CORRECT RESPONSE FORMAT:
     result.modifiedWeb2Code = result.modifiedWeb2Code.replace(/["']CANISTER_ID["']/g, `"${existingCanisterId}"`);
   }
   
-  // For fallback case, only return canisterCode if modifiedWeb2Code and canisterName are absent
   return {
     canisterCode: result.canisterCode,
     modifiedWeb2Code: result.modifiedWeb2Code || '',

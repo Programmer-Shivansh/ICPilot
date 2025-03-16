@@ -29,23 +29,42 @@ function extractJsonFromText(text: string): string {
 
 export async function callGroqAPI(prompt: string): Promise<string> {
   try {
+    // Add explicit instructions for formatting JSON correctly
+    const wrappedPrompt = `
+${prompt}
+
+CRITICAL: 
+Your response MUST be a valid, parseable JSON object and NOTHING else.
+DO NOT use markdown code blocks.
+DO NOT include any explanation text.
+DO NOT format your response in any way that would prevent direct JSON.parse().
+`;
+
     const chatCompletion = await groq.chat.completions.create({
       messages: [
         {
+          role: "system", 
+          content: "You are a code conversion assistant that outputs only valid JSON. Your responses should contain no markdown, no explanations, just pure JSON objects that can be parsed by JSON.parse()."
+        },
+        {
           role: "user",
-          content: prompt
+          content: wrappedPrompt
         }
       ],
       model: "llama-3.3-70b-versatile",
-      temperature: 1,
-      max_tokens: 1024,
-      top_p: 1,
+      temperature: 0.5,  // Reduced for more predictable outputs
+      max_tokens: 2048,  // Increased for more complete responses
+      top_p: 0.9,
       stream: false,
       stop: null
     });
 
     // Extract the response text from the completion
     const responseText = chatCompletion.choices[0]?.message?.content || '';
+    
+    // Log the first 100 characters for debugging
+    console.log(`Groq API response start: ${responseText.substring(0, 100)}...`);
+    
     return responseText;
   } catch (error) {
     if (error instanceof Error) {
