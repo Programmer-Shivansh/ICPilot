@@ -1,6 +1,6 @@
 # DFINITY SDK (DFX) Installation Guide
 
-The ICP Web2 to Web3 Converter extension requires the DFINITY SDK (DFX) to deploy canisters to the Internet Computer. This guide provides instructions for installing DFX on different operating systems.
+The ICPilot Web2 to Web3 Converter extension requires the DFINITY SDK (DFX) to deploy canisters to the Internet Computer. This guide provides instructions for installing DFX on different operating systems.
 
 ## Automatic Installation
 

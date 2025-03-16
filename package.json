@@ -1,6 +1,6 @@
 {
-  "name": "icp-web2-to-web3",
-  "displayName": "ICP Web2 to Web3 Converter",
+  "name": "icpilot-web2-to-web3",
+  "displayName": "ICPilot Web2 to Web3 Converter",
   "description": "Converts Web2 code to Web3 using ICP blockchain",
   "version": "0.0.1",
   "engines": {
@@ -14,7 +14,7 @@
     "commands": [
       {
         "command": "icp-web2-to-web3.convert",
-        "title": "ICP: Convert to Web3"
+        "title": "ICPilot: Convert to Web3"
       }
     ]
   },
