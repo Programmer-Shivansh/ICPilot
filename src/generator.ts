@@ -61,14 +61,14 @@ for the mentioned functionality to work, include them as well.
   if (isConsolidated) {
     consolidatedInstruction = `
 IMPORTANT: This input contains code from multiple files (indicated by file comments).
-Create ONE SINGLE canister that includes ALL functions from these files.
+Create ONE SINGLE CONSOLIDATED canister with name "ConsolidatedCanister" that includes ALL functions from these files.
 The canister should be well-structured with clear organization of functions.
 `;
   } else if (existingCanisterName) {
     consolidatedInstruction = `
 IMPORTANT: A canister named "${existingCanisterName}" already exists that contains all necessary functions.
 DO NOT create a new canister. Instead, modify this client code to use the existing canister.
-In the modifiedWeb2Code, use the existing canister name and don't change the canisterName field.
+In the modifiedWeb2Code, use the existing canister name (${existingCanisterName}) and DO NOT change the canisterName field.
 `;
   }
 
@@ -129,7 +129,10 @@ export async function generateCanisterAndModifyCode(
   modifiedWeb2Code: string;
   canisterName: string;
 }> {
-  let prompt = createDetailedPrompt(web2Code, functionalityFocus, isConsolidated, existingCanisterName);
+  // Override the canister name if consolidated
+  const forcedCanisterName = isConsolidated ? "ConsolidatedCanister" : existingCanisterName;
+  
+  let prompt = createDetailedPrompt(web2Code, functionalityFocus, isConsolidated, forcedCanisterName);
   
   // Maximum number of retries
   const MAX_RETRIES = 3;
@@ -198,12 +201,14 @@ EXAMPLE OF CORRECT RESPONSE FORMAT:
     throw new Error('Invalid Gemini API response: missing required fields');
   }
   
+  // If we have an existing canister name, ensure it's used
+  if (forcedCanisterName) {
+    result.canisterName = forcedCanisterName;
+  }
+  
   // If we have an existing canister ID, replace placeholder in the code
   if (existingCanisterId) {
-    result.modifiedWeb2Code = result.modifiedWeb2Code.replace('CANISTER_ID', existingCanisterId);
-    if (existingCanisterName) {
-      result.canisterName = existingCanisterName; // Use the existing name
-    }
+    result.modifiedWeb2Code = result.modifiedWeb2Code.replace(/["']CANISTER_ID["']/g, `"${existingCanisterId}"`);
   }
   
   return {

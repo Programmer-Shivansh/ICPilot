@@ -1,9 +1,13 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { analyzeCode } from './analyzer';
 import { generateCanisterAndModifyCode } from './generator';
 import { deployCanister } from './deployer';
 import { promptForFileSelection, promptForFunctionalityFocus, SelectedFile } from './provider';
+
+// Global canister name to use for all conversions in a session
+const CANISTER_NAME = "MainCanister";
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('ICP Web2 to Web3 extension is now active!');
@@ -86,62 +90,77 @@ export function activate(context: vscode.ExtensionContext) {
           
           progress.report({ increment: 30, message: 'Generating consolidated canister...' });
           
+          // Always use the consistent canister name
+          const fixedCanisterName = CANISTER_NAME;
+          
+          // Check if the canister file already exists
+          const existingCanisterContent = await getExistingCanisterContent(workspaceFolder.uri.fsPath, fixedCanisterName);
+          
           // Generate a single canister for all files
           const { canisterCode, modifiedWeb2Code, canisterName } = await generateCanisterAndModifyCode(
             combinedCode,
             functionalityFocus,
-            true // Indicate this is a consolidated canister
+            true, // Indicate this is a consolidated canister
+            existingCanisterContent ? fixedCanisterName : undefined // Pass existing canister name if it exists
           );
           
-          // Save the single canister file
-          const canisterUri = vscode.Uri.joinPath(workspaceFolder.uri, 'src', `${canisterName}.mo`);
+          // Save the canister file (overwriting if exists)
+          const srcDir = path.join(workspaceFolder.uri.fsPath, 'src');
+          await fs.promises.mkdir(srcDir, { recursive: true });
+          
+          const canisterUri = vscode.Uri.joinPath(workspaceFolder.uri, 'src', `${fixedCanisterName}.mo`);
           await vscode.workspace.fs.writeFile(canisterUri, new TextEncoder().encode(canisterCode));
           
           progress.report({ increment: 40, message: 'Deploying canister...' });
-          
-          // Deploy the single canister
-          const canisterId = await deployCanister(canisterName, workspaceFolder.uri.fsPath);
-          
-          progress.report({ increment: 50, message: 'Updating client code...' });
-          
-          // Now we need to update each selected file with the appropriate client code
-          let processedCount = 0;
-          const totalFiles = validFiles.length;
-          
-          for (const file of validFiles) {
-            // We need to re-analyze each file individually to generate appropriate client code
-            const singleFileResult = await generateCanisterAndModifyCode(
-              file.content,
-              functionalityFocus,
-              false, // Not consolidated for individual file client code
-              canisterName, // Use the same canister name for all files
-              canisterId   // Use the same canister ID for all files
-            );
-            
-            // Find or open the file to update the Web2 code
-            let document = await findOrOpenDocument(file.path);
-            
-            if (document) {
-              const edit = new vscode.WorkspaceEdit();
-              edit.replace(
-                document.uri,
-                new vscode.Range(0, 0, document.lineCount, 0),
-                singleFileResult.modifiedWeb2Code
-              );
-              await vscode.workspace.applyEdit(edit);
-            }
-            
-            processedCount++;
-            progress.report({ 
-              increment: (50 / totalFiles), 
-              message: `${processedCount}/${totalFiles} files updated` 
-            });
-          }
 
-          progress.report({ increment: 100, message: 'Conversion complete!' });
-          vscode.window.showInformationMessage(
-            `Created single canister "${canisterName}" (${canisterId}) with all functions. ${processedCount} file(s) updated.`
-          );
+          try {
+            // Deploy the single canister
+            const canisterId = await deployCanister(fixedCanisterName, workspaceFolder.uri.fsPath);
+            
+            progress.report({ increment: 50, message: 'Updating client code...' });
+            
+            // Now we need to update each selected file with the appropriate client code
+            let processedCount = 0;
+            const totalFiles = validFiles.length;
+            
+            for (const file of validFiles) {
+              // We need to re-analyze each file individually to generate appropriate client code
+              const singleFileResult = await generateCanisterAndModifyCode(
+                file.content,
+                functionalityFocus,
+                false, // Not consolidated for individual file client code
+                fixedCanisterName, // Use the fixed canister name for all files
+                canisterId   // Use the same canister ID for all files
+              );
+              
+              // Find or open the file to update the Web2 code
+              let document = await findOrOpenDocument(file.path);
+              
+              if (document) {
+                const edit = new vscode.WorkspaceEdit();
+                edit.replace(
+                  document.uri,
+                  new vscode.Range(0, 0, document.lineCount, 0),
+                  singleFileResult.modifiedWeb2Code
+                );
+                await vscode.workspace.applyEdit(edit);
+              }
+              
+              processedCount++;
+              progress.report({ 
+                increment: (50 / totalFiles), 
+                message: `${processedCount}/${totalFiles} files updated` 
+              });
+            }
+          
+            progress.report({ increment: 100, message: 'Conversion complete!' });
+            vscode.window.showInformationMessage(
+              `Created single canister "${fixedCanisterName}" (${canisterId}) with all functions. ${processedCount} file(s) updated.`
+            );
+          } catch (deployError) {
+            vscode.window.showErrorMessage(`Deployment failed: ${deployError instanceof Error ? deployError.message : String(deployError)}`);
+            throw deployError;
+          }
         }
       );
     } catch (error: unknown) {
@@ -151,6 +170,22 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   context.subscriptions.push(disposable);
+}
+
+/**
+ * Gets the content of an existing canister file if it exists
+ */
+async function getExistingCanisterContent(projectPath: string, canisterName: string): Promise<string | null> {
+  try {
+    const filePath = path.join(projectPath, 'src', `${canisterName}.mo`);
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, 'utf8');
+    }
+    return null;
+  } catch (error) {
+    console.log('No existing canister file found:', error);
+    return null;
+  }
 }
 
 /**
