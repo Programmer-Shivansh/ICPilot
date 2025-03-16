@@ -125,10 +125,12 @@ function createDetailedPrompt(
   web2Code: string, 
   functionalityFocus?: string, 
   isConsolidated = false,
-  existingCanisterName?: string
+  existingCanisterName?: string,
+  existingCanisterId?: string
 ): string {
   let focusInstruction = '';
   let consolidatedInstruction = '';
+  let canisterIdInstruction = '';
   
   if (functionalityFocus && functionalityFocus.trim()) {
     focusInstruction = `
@@ -154,12 +156,21 @@ In the modifiedWeb2Code, use the existing canister name (${existingCanisterName}
 `;
   }
 
+  if (existingCanisterId) {
+    canisterIdInstruction = `
+IMPORTANT: Use the exact canister ID "${existingCanisterId}" in the client code. 
+Replace any canister ID placeholders with this specific ID.
+Set this ONCE as a constant at the top of your file - DO NOT declare it multiple times.
+`;
+  }
+
   return `
 INSTRUCTIONS:
 You are an expert in ICP blockchain and Web2-to-Web3 transitions.
-Your task is to convert Web2 JavaScript code to Web3 using Internet Computer Protocol.
+Your task is to REPLACE Web2 JavaScript code with Web3 equivalent using Internet Computer Protocol.
 ${focusInstruction}
 ${consolidatedInstruction}
+${canisterIdInstruction}
 
 INPUT:
 \`\`\`javascript
@@ -168,10 +179,11 @@ ${web2Code}
 
 OUTPUT REQUIREMENTS:
 1. Generate a Motoko canister that replicates the core functionality of the provided Web2 code.
-2. Modify the Web2 JavaScript code to integrate with the canister using @dfinity/agent.
-3. Return a valid JSON object with these exact keys:
+2. TRANSFORM the Web2 JavaScript code to Web3 code that uses the canister via @dfinity/agent.
+3. REPLACE Web2 functionality with Web3 equivalents - DO NOT keep both versions in your output.
+4. Return a valid JSON object with these exact keys:
    - canisterCode: The complete Motoko code for the canister
-   - modifiedWeb2Code: The modified JavaScript code that calls the canister
+   - modifiedWeb2Code: The TRANSFORMED Web2->Web3 JavaScript code that calls the canister
    - canisterName: A descriptive name for the canister
 
 YOUR RESPONSE MUST BE A VALID JSON OBJECT THAT CAN BE PARSED WITH JSON.parse()
@@ -180,8 +192,13 @@ DO NOT use markdown code blocks in your response.
 PROPERLY ESCAPE all quotes and special characters in strings.
 For multi-line strings like canisterCode, use explicit \\n for line breaks.
 
+${existingCanisterId ? `IMPORTANT: In the modifiedWeb2Code, declare the canister ID as "const canisterId = \\"${existingCanisterId}\\";" ONCE at the top of your code.` : ''}
+
 EXAMPLE OF EXPECTED RESPONSE FORMAT:
-{"canisterCode":"actor {\\n  public func greet(name: Text) : async Text {\\n    return \\"Hello \\" # name;\\n  };\\n}","modifiedWeb2Code":"import { Actor, HttpAgent } from \\"@dfinity/agent\\";\\n// rest of code","canisterName":"GreeterCanister"}
+${existingCanisterId ? 
+  `{"canisterCode":"actor {\\n  public func greet(name: Text) : async Text {\\n    return \\"Hello \\" # name;\\n  };\\n}","modifiedWeb2Code":"import { Actor, HttpAgent } from \\"@dfinity/agent\\";\\nconst canisterId = \\"${existingCanisterId}\\";\\n\\n// Define the interface for our canister\\nconst canisterInterface = {\\n  // replace existing code with canister calls\\n};\\n\\nconst agent = new HttpAgent();\\nconst greetingCanister = Actor.createActor(canisterInterface, { agent, canisterId });\\n\\n// Transformed Web2 function\\nasync function greetUser(name) {\\n  const greeting = await greetingCanister.greet(name);\\n  return greeting;\\n}","canisterName":"GreeterCanister"}` :
+  `{"canisterCode":"actor {\\n  public func greet(name: Text) : async Text {\\n    return \\"Hello \\" # name;\\n  };\\n}","modifiedWeb2Code":"import { Actor, HttpAgent } from \\"@dfinity/agent\\";\\n// rest of code","canisterName":"GreeterCanister"}`
+}
 `;
 }
 
@@ -212,7 +229,7 @@ export async function generateCanisterAndModifyCode(
   canisterName: string;
 }> {
   const forcedCanisterName = isConsolidated ? "ConsolidatedCanister" : existingCanisterName;
-  let prompt = createDetailedPrompt(web2Code, functionalityFocus, isConsolidated, forcedCanisterName);
+  let prompt = createDetailedPrompt(web2Code, functionalityFocus, isConsolidated, forcedCanisterName, existingCanisterId);
   
   const MAX_RETRIES = 3;
   let attempt = 0;
@@ -305,8 +322,63 @@ RETURN ONLY A RAW JSON OBJECT WITH NO FORMATTING OR EXPLANATION:
     result.canisterName = forcedCanisterName;
   }
   
+  // Enhanced canister ID replacement with multiple patterns and duplicate detection
   if (existingCanisterId) {
-    result.modifiedWeb2Code = result.modifiedWeb2Code.replace(/["']CANISTER_ID["']/g, `"${existingCanisterId}"`);
+    console.log(`Replacing canister ID placeholders with: ${existingCanisterId}`);
+    
+    // Check if the code already has a canister ID declaration
+    const hasCanisterIdDeclaration = /const\s+canisterId\s*=|let\s+canisterId\s*=|var\s+canisterId\s*=/.test(result.modifiedWeb2Code);
+    
+    // Look for multiple common placeholder patterns
+    const patterns = [
+      /["']CANISTER_ID["']/g,
+      /["']canister-id["']/g,
+      /["']canisterId["']/g,
+      /canisterId\s*=\s*["'][^"']*["']/g,
+      /canister_id\s*=\s*["'][^"']*["']/g,
+      /const\s+canisterId\s*=\s*["'][^"']*["']/g,
+      /let\s+canisterId\s*=\s*["'][^"']*["']/g,
+      /var\s+canisterId\s*=\s*["'][^"']*["']/g,
+      /createActor\(\s*["'][^"']*["']/g
+    ];
+    
+    let originalCode = result.modifiedWeb2Code;
+    
+    // Apply all replacements
+    for (const pattern of patterns) {
+      result.modifiedWeb2Code = result.modifiedWeb2Code.replace(pattern, (match: string) => {
+        // Special handling for different patterns
+        if (match.includes('canisterId =') || match.includes('canister_id =')) {
+          return match.replace(/["'][^"']*["']/, `"${existingCanisterId}"`);
+        } else if (match.includes('const canisterId =') || match.includes('let canisterId =') || match.includes('var canisterId =')) {
+          return match.replace(/["'][^"']*["']/, `"${existingCanisterId}"`);
+        } else if (match.includes('createActor(')) {
+          return `createActor("${existingCanisterId}"`;
+        } else {
+          return `"${existingCanisterId}"`;
+        }
+      });
+    }
+    
+    // Only add canister ID declaration if one doesn't exist yet
+    if (!hasCanisterIdDeclaration && originalCode === result.modifiedWeb2Code) {
+      const importMatch = result.modifiedWeb2Code.match(/import.*?;/s);
+      if (importMatch) {
+        const importStatement = importMatch[0];
+        const importEndIndex = result.modifiedWeb2Code.indexOf(importStatement) + importStatement.length;
+        result.modifiedWeb2Code = 
+          result.modifiedWeb2Code.slice(0, importEndIndex) + 
+          `\n\n// Canister ID for the deployed ${existingCanisterName || "MainCanister"}\nconst canisterId = "${existingCanisterId}";\n` + 
+          result.modifiedWeb2Code.slice(importEndIndex);
+      } else {
+        result.modifiedWeb2Code = 
+          `// Canister ID for the deployed ${existingCanisterName || "MainCanister"}\nconst canisterId = "${existingCanisterId}";\n\n` + 
+          result.modifiedWeb2Code;
+      }
+      console.log('Added explicit canister ID declaration to the code');
+    } else {
+      console.log('Canister ID already defined or replaced in the code');
+    }
   }
   
   return {

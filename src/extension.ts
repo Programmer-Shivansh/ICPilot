@@ -189,11 +189,14 @@ export function activate(context: vscode.ExtensionContext) {
 
           progress.report({ increment: 50, message: 'Deploying canister...' });
           const canisterId = await deployCanister(fixedCanisterName, workspaceFolder.uri.fsPath);
+          console.log(`Deployed canister with ID: ${canisterId}`);
 
           progress.report({ increment: 70, message: 'Updating client code...' });
           let processedCount = 0;
           const totalFiles = validFiles.length;
           for (const file of validFiles) {
+            // Pass the canister ID to the generator function
+            console.log(`Generating code for ${file.filename} with canister ID: ${canisterId}`);
             const singleFileResult = await generateCanisterAndModifyCode(
               file.content,
               functionalityFocus,
@@ -201,6 +204,23 @@ export function activate(context: vscode.ExtensionContext) {
               fixedCanisterName,
               canisterId
             );
+            
+            // Check for duplicate canister ID declarations
+            const canisterIdMatches = (singleFileResult.modifiedWeb2Code.match(/const\s+canisterId\s*=|let\s+canisterId\s*=|var\s+canisterId\s*=/g) || []).length;
+            if (canisterIdMatches > 1) {
+              console.warn(`Found ${canisterIdMatches} canister ID declarations in generated code. Fixing...`);
+              // Remove all but the first canister ID declaration
+              const firstDeclaration = singleFileResult.modifiedWeb2Code.match(/(const|let|var)\s+canisterId\s*=\s*["'][^"']*["'];/);
+              if (firstDeclaration) {
+                const restOfCode = singleFileResult.modifiedWeb2Code.replace(/(const|let|var)\s+canisterId\s*=\s*["'][^"']*["'];/g, '');
+                singleFileResult.modifiedWeb2Code = `${firstDeclaration[0]}\n\n${restOfCode}`;
+              }
+            }
+            
+            // Check if the canister ID is in the modified code
+            const canisterIdIncluded = singleFileResult.modifiedWeb2Code.includes(canisterId);
+            console.log(`Canister ID ${canisterId} included in modified code: ${canisterIdIncluded}`);
+            
             let document = await findOrOpenDocument(file.path);
             if (document) {
               const edit = new vscode.WorkspaceEdit();
@@ -210,11 +230,17 @@ export function activate(context: vscode.ExtensionContext) {
                 singleFileResult.modifiedWeb2Code
               );
               await vscode.workspace.applyEdit(edit);
+              
+              // Double-check the updated content
+              document = await vscode.workspace.openTextDocument(document.uri);
+              const updatedContent = document.getText();
+              const canisterIdVerified = updatedContent.includes(canisterId);
+              console.log(`Verified canister ID in updated document: ${canisterIdVerified}`);
             }
             processedCount++;
             progress.report({
               increment: (20 / totalFiles),
-              message: `${processedCount}/${totalFiles} files updated`
+              message: `${processedCount}/${totalFiles} files updated with canister ID: ${canisterId}`
             });
           }
 
