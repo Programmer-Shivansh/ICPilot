@@ -5,6 +5,8 @@ import { analyzeCode } from './analyzer';
 import { generateCanisterAndModifyCode } from './generator';
 import { deployCanister } from './deployer';
 import { promptForFileSelection, promptForFunctionalityFocus, SelectedFile } from './provider';
+import { checkDfxStatus, DfxStatus, showDfxFixInstructions } from './dfx-setup';
+import { installDfxSdk, verifyDfxInstallation } from './dfx-installer';
 
 // Global canister name to use for all conversions in a session
 const CANISTER_NAME = "MainCanister";
@@ -12,7 +14,102 @@ const CANISTER_NAME = "MainCanister";
 export function activate(context: vscode.ExtensionContext) {
   console.log('ICP Web2 to Web3 extension is now active!');
 
+  // Add a command to check and fix DFX environment
+  const checkDfxCmd = vscode.commands.registerCommand('icp-web2-to-web3.checkDfx', async () => {
+    vscode.window.showInformationMessage('Checking DFX installation...');
+    const status = await checkDfxStatus();
+    
+    switch (status) {
+      case DfxStatus.FullyInstalled:
+        vscode.window.showInformationMessage('DFX is properly installed with all required packages.');
+        break;
+      case DfxStatus.InstalledButMissingPackages:
+        await showDfxFixInstructions();
+        break;
+      case DfxStatus.NotInstalled:
+        vscode.window.showErrorMessage(
+          'DFX is not installed. Install it from https://internetcomputer.org/docs/current/developer-docs/setup/install/',
+          'Open Installation Guide'
+        ).then(selection => {
+          if (selection === 'Open Installation Guide') {
+            vscode.env.openExternal(vscode.Uri.parse('https://internetcomputer.org/docs/current/developer-docs/setup/install/'));
+          }
+        });
+        break;
+    }
+  });
+  
+  context.subscriptions.push(checkDfxCmd);
+
+  // Existing convert command
   let disposable = vscode.commands.registerCommand('icp-web2-to-web3.convert', async () => {
+    // Check DFX status first
+    const status = await checkDfxStatus();
+    if (status === DfxStatus.InstalledButMissingPackages) {
+      const fix = await vscode.window.showWarningMessage(
+        'DFX is installed but missing required packages. Fix before proceeding?',
+        'Fix Now',
+        'Continue Anyway'
+      );
+      
+      if (fix === 'Fix Now') {
+        await showDfxFixInstructions();
+        return;
+      }
+      // else continue with deployment
+    } else if (status === DfxStatus.NotInstalled) {
+      const selection = await vscode.window.showErrorMessage(
+        'DFX is not installed. You need the DFINITY SDK to deploy canisters.',
+        'Install Automatically',
+        'Open Installation Guide',
+        'Cancel'
+      );
+      
+      if (selection === 'Install Automatically') {
+        try {
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: 'Installing DFX...',
+              cancellable: false
+            },
+            async (progress) => {
+              progress.report({ message: 'Starting DFX installation...' });
+              await installDfxSdk();
+              progress.report({ message: 'DFX installation completed successfully!' });
+            }
+          );
+          
+          // Verify installation worked
+          const installed = await verifyDfxInstallation();
+          if (installed) {
+            vscode.window.showInformationMessage('DFX has been successfully installed. Continuing with conversion...');
+            // Continue with conversion without returning
+          } else {
+            const continueAnyway = await vscode.window.showWarningMessage(
+              'DFX installation completed but verification failed. This might be due to environment variables not being fully updated.',
+              'Continue Anyway',
+              'Cancel'
+            );
+            if (continueAnyway !== 'Continue Anyway') {
+              return;
+            }
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(`Failed to install DFX: ${errorMessage}`);
+          return;
+        }
+      } else if (selection === 'Open Installation Guide') {
+        vscode.env.openExternal(vscode.Uri.parse('https://internetcomputer.org/docs/current/developer-docs/setup/install/'));
+        return;
+      } else {
+        // User clicked Cancel
+        return;
+      }
+    }
+
+    // Rest of the existing convert command implementation
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
       vscode.window.showErrorMessage('No workspace folder open!');
