@@ -203,7 +203,7 @@ export async function deployCanister(canisterName: string, projectPath: string):
 
         progress.report({ increment: 30, message: `Using DFX version ${dfxCheck.version || 'unknown'}` });
 
-        const icProjectDir = path.join(projectPath, 'ic_project');
+        const icProjectDir = path.join(projectPath, 'icpilot');
         await createDirIfNotExists(icProjectDir);
         const srcDir = path.join(icProjectDir, 'src');
         const canisterDir = path.join(srcDir, canisterName);

@@ -126,11 +126,13 @@ function createDetailedPrompt(
   functionalityFocus?: string, 
   isConsolidated = false,
   existingCanisterName?: string,
-  existingCanisterId?: string
+  existingCanisterId?: string,
+  existingCanisterCode?: string | null
 ): string {
   let focusInstruction = '';
   let consolidatedInstruction = '';
   let canisterIdInstruction = '';
+  let existingCodeInstruction = '';
   
   if (functionalityFocus && functionalityFocus.trim()) {
     focusInstruction = `
@@ -164,6 +166,19 @@ Set this ONCE as a constant at the top of your file - DO NOT declare it multiple
 `;
   }
 
+  if (existingCanisterCode) {
+    existingCodeInstruction = `
+IMPORTANT: The canister "${existingCanisterName || 'MainCanister'}" already exists with the following code.
+DO NOT REPLACE THIS CODE. Instead, MERGE your new functions with the existing ones.
+KEEP ALL EXISTING FUNCTIONALITY while adding new functions to handle the Web2 code conversion.
+
+EXISTING CANISTER CODE:
+\`\`\`motoko
+${existingCanisterCode}
+\`\`\`
+`;
+  }
+
   return `
 INSTRUCTIONS:
 You are an expert in ICP blockchain and Web2-to-Web3 transitions.
@@ -171,6 +186,7 @@ Your task is to REPLACE Web2 JavaScript code with Web3 equivalent using Internet
 ${focusInstruction}
 ${consolidatedInstruction}
 ${canisterIdInstruction}
+${existingCodeInstruction}
 
 INPUT:
 \`\`\`javascript
@@ -178,11 +194,11 @@ ${web2Code}
 \`\`\`
 
 OUTPUT REQUIREMENTS:
-1. Generate a Motoko canister that replicates the core functionality of the provided Web2 code.
+1. ${existingCanisterCode ? 'UPDATE the existing Motoko canister by adding new functions to handle the provided Web2 code.' : 'Generate a new Motoko canister that replicates the core functionality of the provided Web2 code.'}
 2. TRANSFORM the Web2 JavaScript code to Web3 code that uses the canister via @dfinity/agent.
 3. REPLACE Web2 functionality with Web3 equivalents - DO NOT keep both versions in your output.
 4. Return a valid JSON object with these exact keys:
-   - canisterCode: The complete Motoko code for the canister
+   - canisterCode: ${existingCanisterCode ? 'The UPDATED Motoko code that INCLUDES all existing functions plus new ones' : 'The complete Motoko code for the canister'}
    - modifiedWeb2Code: The TRANSFORMED Web2->Web3 JavaScript code that calls the canister
    - canisterName: A descriptive name for the canister
 
@@ -196,10 +212,90 @@ ${existingCanisterId ? `IMPORTANT: In the modifiedWeb2Code, declare the canister
 
 EXAMPLE OF EXPECTED RESPONSE FORMAT:
 ${existingCanisterId ? 
-  `{"canisterCode":"actor {\\n  public func greet(name: Text) : async Text {\\n    return \\"Hello \\" # name;\\n  };\\n}","modifiedWeb2Code":"import { Actor, HttpAgent } from \\"@dfinity/agent\\";\\nconst canisterId = \\"${existingCanisterId}\\";\\n\\n// Define the interface for our canister\\nconst canisterInterface = {\\n  // replace existing code with canister calls\\n};\\n\\nconst agent = new HttpAgent();\\nconst greetingCanister = Actor.createActor(canisterInterface, { agent, canisterId });\\n\\n// Transformed Web2 function\\nasync function greetUser(name) {\\n  const greeting = await greetingCanister.greet(name);\\n  return greeting;\\n}","canisterName":"GreeterCanister"}` :
+  `{"canisterCode":"actor {\\n  // Existing functions are preserved\\n  public func existingFunction() : async Text {\\n    return \\"I was here before\\";\\n  };\\n\\n  // New function added\\n  public func greet(name: Text) : async Text {\\n    return \\"Hello \\" # name;\\n  };\\n}","modifiedWeb2Code":"import { Actor, HttpAgent } from \\"@dfinity/agent\\";\\nconst canisterId = \\"${existingCanisterId}\\";\\n\\n// Define the interface for our canister\\nconst canisterInterface = {\\n  // Use the canister\\n};\\n\\nconst agent = new HttpAgent();\\nconst greetingCanister = Actor.createActor(canisterInterface, { agent, canisterId });\\n\\n// Transformed Web2 function\\nasync function greetUser(name) {\\n  const greeting = await greetingCanister.greet(name);\\n  return greeting;\\n}","canisterName":"GreeterCanister"}` :
   `{"canisterCode":"actor {\\n  public func greet(name: Text) : async Text {\\n    return \\"Hello \\" # name;\\n  };\\n}","modifiedWeb2Code":"import { Actor, HttpAgent } from \\"@dfinity/agent\\";\\n// rest of code","canisterName":"GreeterCanister"}`
 }
 `;
+}
+
+/**
+ * Extract function declarations from Motoko code
+ * @param code Motoko code
+ * @returns Array of function declarations
+ */
+function extractMotokoFunctions(code: string): string[] {
+  // Find all public func declarations - this is a simple extraction
+  // In a real implementation you might need a proper parser
+  const functionRegex = /public\s+(?:shared\s+)?(?:query\s+)?func\s+([^{]+){([^}]*)}/g;
+  const functions: string[] = [];
+  let match;
+  
+  while ((match = functionRegex.exec(code)) !== null) {
+    functions.push(`public ${match[0].substring(6).trim()}`);
+  }
+  
+  return functions;
+}
+
+/**
+ * Merges existing canister code with new code by preserving existing functions
+ * @param existingCode Existing canister code
+ * @param newCode New canister code
+ * @returns Merged canister code
+ */
+function mergeCanisterCode(existingCode: string, newCode: string): string {
+  // If the AI already did a good job merging, just return the new code
+  if (newCode.includes("// Existing functions") || 
+      newCode.includes("// existing functions")) {
+    return newCode;
+  }
+  
+  // Extract actor declaration from existing code
+  const actorMatch = existingCode.match(/actor\s+(?:\w+\s*)?{/);
+  if (!actorMatch) return newCode; // If we can't find actor declaration, just use new code
+  
+  const actorDeclaration = actorMatch[0];
+  
+  // Extract existing functions
+  const existingFunctions = extractMotokoFunctions(existingCode);
+  console.log(`Found ${existingFunctions.length} existing functions`);
+  
+  // Extract new functions
+  const newFunctions = extractMotokoFunctions(newCode);
+  console.log(`Found ${newFunctions.length} new functions`);
+  
+  // Create a set of function names to avoid duplicates
+  const existingFunctionNames = new Set(existingFunctions.map(f => {
+    const nameMatch = f.match(/func\s+(\w+)/);
+    return nameMatch ? nameMatch[1] : '';
+  }).filter(Boolean));
+  
+  // Filter out functions that already exist
+  const uniqueNewFunctions = newFunctions.filter(f => {
+    const nameMatch = f.match(/func\s+(\w+)/);
+    const name = nameMatch ? nameMatch[1] : '';
+    return name && !existingFunctionNames.has(name);
+  });
+  
+  console.log(`Adding ${uniqueNewFunctions.length} unique new functions`);
+  
+  // Build the merged code
+  let mergedCode = actorDeclaration + '\n';
+  
+  // Add existing functions
+  if (existingFunctions.length > 0) {
+    mergedCode += '  // Existing functions\n  ' + existingFunctions.join('\n\n  ') + '\n\n';
+  }
+  
+  // Add new functions
+  if (uniqueNewFunctions.length > 0) {
+    mergedCode += '  // New functions added\n  ' + uniqueNewFunctions.join('\n\n  ') + '\n';
+  }
+  
+  // Close actor
+  mergedCode += '\n}';
+  
+  return mergedCode;
 }
 
 /**
@@ -222,14 +318,22 @@ export async function generateCanisterAndModifyCode(
   functionalityFocus?: string,
   isConsolidated = false,
   existingCanisterName?: string,
-  existingCanisterId?: string
+  existingCanisterId?: string,
+  existingCanisterCode?: string | null
 ): Promise<{
   canisterCode: string;
   modifiedWeb2Code: string;
   canisterName: string;
 }> {
   const forcedCanisterName = isConsolidated ? "ConsolidatedCanister" : existingCanisterName;
-  let prompt = createDetailedPrompt(web2Code, functionalityFocus, isConsolidated, forcedCanisterName, existingCanisterId);
+  let prompt = createDetailedPrompt(
+    web2Code, 
+    functionalityFocus, 
+    isConsolidated, 
+    forcedCanisterName, 
+    existingCanisterId,
+    existingCanisterCode
+  );
   
   const MAX_RETRIES = 3;
   let attempt = 0;
@@ -316,6 +420,16 @@ RETURN ONLY A RAW JSON OBJECT WITH NO FORMATTING OR EXPLANATION:
       modifiedWeb2Code: web2Code + "\n\n// TODO: Implement canister integration",
       canisterName: forcedCanisterName || "MainCanister"
     };
+  }
+  
+  // Format and merge the canister code if there's existing code
+  if (existingCanisterCode && result.canisterCode) {
+    console.log('Merging new canister code with existing code');
+    const formattedExistingCode = formatMotokoCode(existingCanisterCode);
+    const formattedNewCode = formatMotokoCode(result.canisterCode);
+    result.canisterCode = mergeCanisterCode(formattedExistingCode, formattedNewCode);
+  } else {
+    result.canisterCode = formatMotokoCode(result.canisterCode);
   }
   
   if (forcedCanisterName) {

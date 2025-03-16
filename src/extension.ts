@@ -175,11 +175,24 @@ export function activate(context: vscode.ExtensionContext) {
           progress.report({ increment: 30, message: 'Generating consolidated canister...' });
           const fixedCanisterName = CANISTER_NAME;
           const existingCanisterContent = await getExistingCanisterContent(workspaceFolder.uri.fsPath, fixedCanisterName);
+
+          // Log if we're updating or creating a new canister
+          if (existingCanisterContent) {
+            console.log(`Found existing canister code (${existingCanisterContent.length} bytes). Updating...`);
+            progress.report({ message: 'Updating existing canister...' });
+          } else {
+            console.log('No existing canister found. Creating new one...');
+            progress.report({ message: 'Creating new canister...' });
+          }
+
+          // Pass existingCanisterContent to be merged, not replaced
           const { canisterCode, modifiedWeb2Code, canisterName } = await generateCanisterAndModifyCode(
             combinedCode,
             functionalityFocus,
             true,
-            existingCanisterContent ? fixedCanisterName : undefined
+            existingCanisterContent ? fixedCanisterName : undefined,
+            undefined, // No canisterId yet
+            existingCanisterContent // Pass existing canister code
           );
 
           const srcDir = path.join(workspaceFolder.uri.fsPath, 'src');
@@ -275,11 +288,14 @@ async function getExistingCanisterContent(projectPath: string, canisterName: str
   try {
     const filePath = path.join(projectPath, 'src', `${canisterName}.mo`);
     if (fs.existsSync(filePath)) {
-      return fs.readFileSync(filePath, 'utf8');
+      const content = fs.readFileSync(filePath, 'utf8');
+      console.log(`Found existing canister at ${filePath}, ${content.length} bytes`);
+      return content;
     }
+    console.log(`No existing canister found at ${filePath}`);
     return null;
   } catch (error) {
-    console.log('No existing canister file found:', error);
+    console.log('Error reading existing canister file:', error);
     return null;
   }
 }
