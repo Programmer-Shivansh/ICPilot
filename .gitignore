@@ -4,3 +4,5 @@ node_modules
 *.log
 test
 dfx.json
+icpilot.mp4
+.env

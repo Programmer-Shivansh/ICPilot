@@ -1,8 +1,11 @@
 import fetch from 'node-fetch';
+import { config } from 'dotenv';
 
+// Load environment variables from .env file
+config();
 // Replace with your actual Gemini API key
-const GEMINI_API_KEY = 'AIzaSyCDhUxjr77ED3gHHlNzCPXwLiOQmr3KIyA'; // Set this in your environment or config
-console.log('GEMINI_API_KEY:', GEMINI_API_KEY);
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // Set this in your environment or config
+// console.log('GEMINI_API_KEY:', GEMINI_API_KEY);
 
 /**
  * Extracts JSON content from potentially markdown-formatted text

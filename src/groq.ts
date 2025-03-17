@@ -1,9 +1,12 @@
 import { Groq } from 'groq-sdk';
+import { config} from 'dotenv';
 
+// Load environment variables from .env file
+config();
 // Initialize the Groq client
 const groq = new Groq({
   // You may need to set your API key here or via environment variable
-  apiKey: "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"
+  apiKey: `${process.env.GROQ_API_KEY}`,
 });
 
 /**

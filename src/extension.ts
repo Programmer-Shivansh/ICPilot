@@ -15,7 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
   console.log('ICP Web2 to Web3 extension is now active!');
 
   // Add a command to check and fix DFX environment
-  const checkDfxCmd = vscode.commands.registerCommand('icp-web2-to-web3.checkDfx', async () => {
+  const checkDfxCmd = vscode.commands.registerCommand('icpilot-web2-to-web3.checkDfx', async () => {
     vscode.window.showInformationMessage('Checking DFX installation...');
     const status = await checkDfxStatus();
     
@@ -42,7 +42,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(checkDfxCmd);
 
   // Existing convert command
-  let disposable = vscode.commands.registerCommand('icp-web2-to-web3.convert', async () => {
+  let disposable = vscode.commands.registerCommand('icpilot-web2-to-web3.convert', async () => {
     // Check DFX status first
     const status = await checkDfxStatus();
     if (status === DfxStatus.InstalledButMissingPackages) {

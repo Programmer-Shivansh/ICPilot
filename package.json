@@ -14,13 +14,13 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:icpilot.convert"
+    "onCommand:icpilot-web2-to-web3.convert"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "icpilot.convert",
+        "command": "icpilot-web2-to-web3.convert",
         "title": "ICPilot: Convert to Web3"
       }
     ]
